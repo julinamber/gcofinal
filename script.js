@@ -1459,11 +1459,12 @@ async function renderStudentView(root, menu) {
     await loadCounselors();
     const todayIso = new Date().toISOString().slice(0, 10);
     const slotOptions = [
-      { value: "08:15", label: "08:15 - 08:30 AM" },
-      { value: "09:00", label: "09:00 AM - 10:00 AM" },
-      { value: "10:30", label: "10:30 AM - 11:30 AM" },
-      { value: "13:00", label: "01:00 PM - 02:00 PM" },
-      { value: "14:30", label: "02:30 PM - 03:30 PM" }
+      { value: "08:15", label: "08:15 AM - 08:55 AM" },
+      { value: "09:15", label: "09:00 AM - 10:55 AM" },
+      { value: "11:15", label: "11:00 AM - 12:55 PM" },
+      { value: "13:15", label: "01:15 PM - 01:55 PM" },
+      { value: "14:15", label: "02:15 PM - 02:55 PM" },
+      { value: "15:15", label: "03:15 PM - 03:55 PM" },
     ];
     root.innerHTML = `
       <div class="panel-header"><h2 class="section-title">Book Appointment</h2></div>

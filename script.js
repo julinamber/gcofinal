@@ -220,9 +220,25 @@ function syncDashboardUrl(role, menu, mode) {
   setDashboardDocumentTitle(menu);
 }
 
+/** Update main panel only when the dashboard shell is already mounted (keeps sidebar DOM stable). */
+function applyDashboardSection(role, menu) {
+  const viewRoot = document.getElementById("viewRoot");
+  const menuNav = document.getElementById("menuNav");
+  if (!viewRoot || !menuNav) return false;
+  menuNav.querySelectorAll(".menu-btn").forEach((btn) => {
+    const label = btn.dataset.menuLabel ?? btn.textContent;
+    btn.classList.toggle("active", label === menu);
+  });
+  renderViewByRole(role, menu).catch((err) => {
+    viewRoot.innerHTML = `<p class="feedback feedback-error">${err.message}</p>`;
+  });
+  return true;
+}
+
 function navigateDashboard(role, menu, urlMode = "push") {
   state.activeMenu = menu;
   syncDashboardUrl(role, menu, urlMode);
+  if (applyDashboardSection(role, menu)) return;
   renderDashboard(role);
 }
 
@@ -309,14 +325,23 @@ function setupLogoDisplay() {
   const logoFallback = document.getElementById("logoFallback");
   if (!logoImg || !logoFallback) return;
 
-  logoImg.addEventListener("load", () => {
+  const showImage = () => {
     logoImg.style.display = "block";
     logoFallback.style.display = "none";
-  });
-  logoImg.addEventListener("error", () => {
+  };
+  const showFallback = () => {
     logoImg.style.display = "none";
     logoFallback.style.display = "grid";
-  });
+  };
+
+  // Image may already be cached and loaded before listeners attach.
+  if (logoImg.complete) {
+    if (logoImg.naturalWidth > 0) showImage();
+    else showFallback();
+  }
+
+  logoImg.addEventListener("load", showImage);
+  logoImg.addEventListener("error", showFallback);
 }
 
 function setDarkMode(enabled) {
@@ -388,9 +413,7 @@ function attachPasswordStrength(input, indicatorEl) {
     }
     const check = validateStrongPassword(input.value);
     indicatorEl.textContent = check.message;
-    indicatorEl.className = check.ok ? "feedback status-success tiny" : "feedback tiny";
-    if (!check.ok) indicatorEl.style.color = "#b91c1c";
-    else indicatorEl.style.color = "";
+    indicatorEl.className = check.ok ? "feedback status-success tiny" : "feedback feedback-error tiny";
   };
   input.addEventListener("input", update);
   update();
@@ -422,7 +445,7 @@ function renderRoleSelect() {
   if (params.get("err") === "role" && msgEl) {
     msgEl.classList.remove("hidden");
     msgEl.textContent = "Choose Student, Counselor, or Admin first.";
-    msgEl.style.color = "#b91c1c";
+    msgEl.className = "feedback feedback-error";
   }
 
   document.querySelectorAll(".role-btn").forEach((btn) => {
@@ -465,7 +488,7 @@ function startStudentGoogleSignIn(msgEl) {
           msgEl.classList.remove("hidden");
           msgEl.textContent =
             "Google sign-in is not configured yet. Set ENABLE_GOOGLE_OAUTH=true and valid GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env, then restart.";
-          msgEl.style.color = "#b91c1c";
+          msgEl.className = "feedback feedback-error";
         }
         return;
       }
@@ -475,7 +498,7 @@ function startStudentGoogleSignIn(msgEl) {
       if (msgEl) {
         msgEl.classList.remove("hidden");
         msgEl.textContent = "Cannot reach server.";
-        msgEl.style.color = "#b91c1c";
+        msgEl.className = "feedback feedback-error";
       }
     });
 }
@@ -526,6 +549,17 @@ function renderLogin(role) {
   showSignupBtn?.addEventListener("click", () => openPane("signup"));
   showLoginBtn?.addEventListener("click", () => openPane("login"));
 
+  if (role === "counselor" || role === "admin") {
+    if (showSignupBtn) {
+      showSignupBtn.remove();
+    }
+    if (signupPane) {
+      signupPane.classList.add("hidden");
+      signupPane.remove();
+    }
+    if (loginPane) loginPane.classList.remove("hidden");
+  }
+
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const email = emailInput.value.trim().toLowerCase();
@@ -533,7 +567,7 @@ function renderLogin(role) {
 
     if (!isValidUniversityEmailForRole(email, role)) {
       message.textContent = `Use @${getRequiredDomainByRole(role)} for this portal.`;
-      message.style.color = "#b91c1c";
+      message.className = "feedback feedback-error";
       return;
     }
 
@@ -547,7 +581,7 @@ function renderLogin(role) {
         localStorage.setItem("gco_token", result.token);
         localStorage.setItem("gco_user", JSON.stringify(result.user));
         message.textContent = "Success. Loading dashboard…";
-        message.classList.add("status-success");
+        message.className = "feedback status-success";
         const ur = result.user.role;
         state.activeMenu = DASHBOARD_MENUS[ur][0];
         history.replaceState(null, "", getDashboardPath(ur, state.activeMenu));
@@ -556,7 +590,7 @@ function renderLogin(role) {
       })
       .catch((err) => {
         message.textContent = err.message;
-        message.style.color = "#b91c1c";
+        message.className = "feedback feedback-error";
       });
   });
 
@@ -568,13 +602,13 @@ function renderLogin(role) {
     if (!fullName || !email || !password) return;
     if (!isValidUniversityEmailForRole(email, role)) {
       signupMessage.textContent = "Use @xu.edu.ph email.";
-      signupMessage.style.color = "#b91c1c";
+      signupMessage.className = "feedback feedback-error";
       return;
     }
     const strong = validateStrongPassword(password);
     if (!strong.ok) {
       signupMessage.textContent = strong.message;
-      signupMessage.style.color = "#b91c1c";
+      signupMessage.className = "feedback feedback-error";
       return;
     }
     api("/auth/signup", {
@@ -587,7 +621,7 @@ function renderLogin(role) {
       })
       .catch((err) => {
         signupMessage.textContent = err.message;
-        signupMessage.style.color = "#b91c1c";
+        signupMessage.className = "feedback feedback-error";
       });
   });
 
@@ -654,6 +688,8 @@ function renderDashboard(role) {
 
   menusByRole[role].forEach((menu) => {
     const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.menuLabel = menu;
     btn.className = `menu-btn ${menu === state.activeMenu ? "active" : ""}`;
     btn.textContent = menu;
     btn.onclick = () => {
@@ -666,7 +702,7 @@ function renderDashboard(role) {
 
   renderViewByRole(role, state.activeMenu).catch((err) => {
     const root = document.getElementById("viewRoot");
-    root.innerHTML = `<p class="feedback" style="color:#b91c1c;">${err.message}</p>`;
+    root.innerHTML = `<p class="feedback feedback-error">${err.message}</p>`;
   });
   if (notificationPollTimer) clearInterval(notificationPollTimer);
   notificationPollTimer = setInterval(() => {
@@ -716,6 +752,10 @@ async function refreshSidebarIdentity() {
 async function renderViewByRole(role, menu) {
   const root = document.getElementById("viewRoot");
   if (!root) return;
+  root.classList.remove("view-anim-in");
+  // force reflow so the animation restarts on every tab change
+  void root.offsetWidth;
+  root.classList.add("view-anim-in");
   if (role === "student") return renderStudentView(root, menu);
   if (role === "counselor") return renderCounselorView(root, menu);
   if (role === "admin") return renderAdminView(root, menu);
@@ -839,7 +879,7 @@ async function renderCounselorCalendar(root) {
         <p class="muted tiny">Last updated: ${refreshedAt.toLocaleTimeString()}</p>
       </div>
     </div>
-    <div class="card stack-md" style="margin-bottom:1rem;">
+    <div class="card stack-md section-block">
       <h3>Add Unavailable Date / Time</h3>
       <p class="muted tiny">Leave both times blank to block the entire day. Otherwise students cannot pick that date during the blocked window.</p>
       <form id="availabilityForm" class="stack-md">
@@ -853,7 +893,7 @@ async function renderCounselorCalendar(root) {
       </form>
       <p id="availabilityMsg" class="feedback"></p>
     </div>
-    <div class="table-wrap" style="margin-bottom:1rem;">
+    <div class="table-wrap section-block">
       ${availability.length ? `
       <table>
         <thead><tr><th>Date</th><th>Time</th><th>Reason</th><th>Action</th></tr></thead>
@@ -902,7 +942,7 @@ async function renderCounselorCalendar(root) {
     const msg = document.getElementById("availabilityMsg");
     if ((startTime && !endTime) || (!startTime && endTime)) {
       msg.textContent = "Provide both start and end time, or leave both empty for an all-day block.";
-      msg.style.color = "#b91c1c";
+      msg.className = "feedback feedback-error";
       return;
     }
     try {
@@ -920,7 +960,7 @@ async function renderCounselorCalendar(root) {
       await renderCounselorCalendar(root);
     } catch (err) {
       msg.textContent = err.message;
-      msg.style.color = "#b91c1c";
+      msg.className = "feedback feedback-error";
     }
   };
 
@@ -1052,7 +1092,7 @@ async function renderNotificationsView(root) {
       await renderNotificationsView(root);
     } catch (err) {
       msg.textContent = err.message;
-      msg.style.color = "#b91c1c";
+      msg.className = "feedback feedback-error";
     }
   });
 
@@ -1078,7 +1118,7 @@ async function renderAccountSettings(root) {
   const oauthOnly = me.authProvider === "google" && !me.hasPassword;
   const passwordSection = oauthOnly
     ? ""
-    : `<div class="card stack-md" style="margin-bottom:1rem;">
+    : `<div class="card stack-md section-block">
       <h3>Change Password</h3>
       <form id="passwordForm" class="stack-md">
         <label class="field"><span>Current password</span><input id="currentPassword" type="password" required /></label>
@@ -1088,7 +1128,7 @@ async function renderAccountSettings(root) {
     </div>`;
   root.innerHTML = `
     <div class="panel-header"><h2 class="section-title">Settings</h2></div>
-    <div class="card stack-md" style="margin-bottom:1rem;">
+    <div class="card stack-md section-block">
       <h3>Profile</h3>
       <p class="muted tiny">Signed in as <strong>${escapeHtml(me.email || "")}</strong> (${escapeHtml(me.role || "")})</p>
       <form id="profileForm" class="stack-md">
@@ -1129,14 +1169,14 @@ async function renderAccountSettings(root) {
       msg.className = "feedback status-success";
     } catch (err) {
       msg.textContent = err.message;
-      msg.style.color = "#b91c1c";
+      msg.className = "feedback feedback-error";
     }
   };
   document.getElementById("uploadProfilePicBtn").onclick = async () => {
     const file = document.getElementById("profilePicFile").files?.[0];
     if (!file) {
       msg.textContent = "Choose an image file first.";
-      msg.style.color = "#b91c1c";
+      msg.className = "feedback feedback-error";
       return;
     }
     const form = new FormData();
@@ -1148,7 +1188,7 @@ async function renderAccountSettings(root) {
       msg.className = "feedback status-success";
     } catch (err) {
       msg.textContent = err.message;
-      msg.style.color = "#b91c1c";
+      msg.className = "feedback feedback-error";
     }
   };
 
@@ -1168,7 +1208,7 @@ async function renderAccountSettings(root) {
       const strong = validateStrongPassword(nextPassword);
       if (!strong.ok) {
         msg.textContent = strong.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
         return;
       }
       try {
@@ -1183,7 +1223,7 @@ async function renderAccountSettings(root) {
         msg.className = "feedback status-success";
       } catch (err) {
         msg.textContent = err.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
       }
     };
   }
@@ -1246,7 +1286,7 @@ async function renderCounselorView(root, menu) {
 
     const pendingTable = `<div class="table-wrap"><table><thead><tr><th>Code</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>${openRequests.map((a) => `<tr><td>${escapeHtml(a.booking_code)}</td><td>${formatDisplayDate(a.appointment_date)}</td><td>${formatDisplayTime(a.appointment_time)}</td><td>${a.status}</td><td><button class="btn primary approve-btn" data-id="${a.id}">Accept</button><button class="btn ghost decline-btn" data-id="${a.id}">Decline</button></td></tr>`).join("") || `<tr><td colspan="5">No open requests</td></tr>`}</tbody></table></div>`;
 
-    const activeTable = `<div class="table-wrap" style="margin-top:1.25rem;"><table><thead><tr><th>Date / Time</th><th>Student</th><th>Service Type</th><th>Student Cancellation</th><th>Status</th><th>Action</th></tr></thead><tbody>${activeRows.map((a) => `<tr>
+    const activeTable = `<div class="table-wrap u-mt-section"><table><thead><tr><th>Date / Time</th><th>Student</th><th>Service Type</th><th>Student Cancellation</th><th>Status</th><th>Action</th></tr></thead><tbody>${activeRows.map((a) => `<tr>
       <td>${formatDateTime(a)}</td>
       <td>${escapeHtml(a.student_name || "—")}</td>
       <td>${escapeHtml(a.service_type || "—")}</td>
@@ -1269,7 +1309,7 @@ async function renderCounselorView(root, menu) {
       <div class="panel-header"><h2 class="section-title">Requests</h2></div>
       <h3 class="subsection-title">Open requests</h3>
       ${pendingTable}
-      <h3 class="subsection-title" style="margin-top:1.25rem;">All your appointments</h3>
+      <h3 class="subsection-title u-mt-section">All your appointments</h3>
       <p class="muted tiny">After a session, mark it as Done, Referred, or No-show. Closed items move to the section below.</p>
       ${activeTable}
       <div id="closedAppointmentsCard" class="collapsible-card">
@@ -1287,13 +1327,13 @@ async function renderCounselorView(root, menu) {
       try {
         await api(`/appointments/${btn.dataset.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "accepted" }) });
         await renderCounselorView(root, menu);
-      } catch (err) { reqMsg.textContent = err.message; reqMsg.style.color = "#b91c1c"; }
+      } catch (err) { reqMsg.textContent = err.message; reqMsg.className = "feedback feedback-error"; }
     }));
     document.querySelectorAll(".decline-btn").forEach((btn) => (btn.onclick = async () => {
       try {
         await api(`/appointments/${btn.dataset.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "declined" }) });
         await renderCounselorView(root, menu);
-      } catch (err) { reqMsg.textContent = err.message; reqMsg.style.color = "#b91c1c"; }
+      } catch (err) { reqMsg.textContent = err.message; reqMsg.className = "feedback feedback-error"; }
     }));
     document.querySelectorAll(".outcome-select").forEach((sel) => {
       sel.addEventListener("change", () => {
@@ -1306,7 +1346,7 @@ async function renderCounselorView(root, menu) {
       const outcome = sel?.value;
       if (!outcome) {
         reqMsg.textContent = "Please choose an outcome from the dropdown first.";
-        reqMsg.style.color = "#b91c1c";
+        reqMsg.className = "feedback feedback-error";
         return;
       }
       const labelMap = { done: "mark as Done", referred: "mark as Referred", no_show: "mark as No-show" };
@@ -1321,7 +1361,7 @@ async function renderCounselorView(root, menu) {
         await renderCounselorView(root, menu);
       } catch (err) {
         reqMsg.textContent = err.message;
-        reqMsg.style.color = "#b91c1c";
+        reqMsg.className = "feedback feedback-error";
         btn.disabled = false;
         btn.textContent = prevText;
       }
@@ -1348,7 +1388,7 @@ async function renderCounselorView(root, menu) {
             <div class="kpi"><p>This month</p><strong id="counselorKpiMonth">${data.monthly}</strong></div>
             <div class="kpi"><p>This year</p><strong id="counselorKpiYear">${data.yearly}</strong></div>
           </div>
-          <h3 class="subsection-title" style="margin-top:1.25rem;">Outcome breakdown (all-time)</h3>
+          <h3 class="subsection-title u-mt-section">Outcome breakdown (all-time)</h3>
           <div class="grid-4 outcome-grid">
             <div class="kpi outcome-card done"><p>Done</p><strong id="counselorOutDone">0</strong></div>
             <div class="kpi outcome-card referred"><p>Referred</p><strong id="counselorOutReferred">0</strong></div>
@@ -1459,12 +1499,11 @@ async function renderStudentView(root, menu) {
     await loadCounselors();
     const todayIso = new Date().toISOString().slice(0, 10);
     const slotOptions = [
-      { value: "07:30", label: "07:30 AM - 08:30 AM" },
-      { value: "09:15", label: "09:15 AM - 10:55 AM" },
-      { value: "11:15", label: "11:15 AM - 12:55 PM" },
-      { value: "13:15", label: "01:15 PM - 01:55 PM" },
-      { value: "14:15", label: "02:15 PM - 02:55 PM" },
-      { value: "15:15", label: "03:15 PM - 03:55 PM" },
+      { value: "08:15", label: "08:15 AM - 08:55 AM" },
+      { value: "09:00", label: "09:00 AM - 10:00 AM" },
+      { value: "10:30", label: "10:30 AM - 11:30 AM" },
+      { value: "13:00", label: "01:00 PM - 02:00 PM" },
+      { value: "14:30", label: "02:30 PM - 03:30 PM" }
     ];
     root.innerHTML = `
       <div class="panel-header"><h2 class="section-title">Book Appointment</h2></div>
@@ -1635,7 +1674,7 @@ async function renderStudentView(root, menu) {
         msg.className = "feedback status-success";
       } catch (err) {
         msg.textContent = err.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
       }
     };
     return;
@@ -1662,7 +1701,7 @@ async function renderStudentView(root, menu) {
     root.innerHTML = `
       <div class="panel-header"><h2 class="section-title">Appointment History</h2></div>
       <div class="table-wrap"><table><thead><tr><th>Code</th><th>Date</th><th>Time</th><th>Status</th><th>Your cancellation reason</th><th>Action</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
-      <div id="studentCancelModal" class="modal hidden" style="display:none;">
+      <div id="studentCancelModal" class="modal hidden">
         <div class="modal-content stack-md">
           <h3 id="studentCancelTitle">Cancel appointment</h3>
           <p class="muted tiny">Counselors and admin will see this reason.</p>
@@ -1701,7 +1740,7 @@ async function renderStudentView(root, menu) {
       const reason = reasonInput.value.trim();
       if (reason.length < 5) {
         msg.textContent = "Please enter at least 5 characters.";
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
         return;
       }
       if (!pendingCancelId) return;
@@ -1716,7 +1755,7 @@ async function renderStudentView(root, menu) {
         await renderStudentView(root, menu);
       } catch (err) {
         msg.textContent = err.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
       }
     };
     document.querySelectorAll(".student-cancel-appt").forEach((btn) => {
@@ -1803,7 +1842,7 @@ async function renderAdminReportsPage(root) {
           msg.className = "feedback status-success";
         } catch (e) {
           msg.textContent = e.message;
-          msg.style.color = "#b91c1c";
+          msg.className = "feedback feedback-error";
         }
       };
       document.getElementById("dlAuditCsv").onclick = async () => {
@@ -1814,7 +1853,7 @@ async function renderAdminReportsPage(root) {
           msg.className = "feedback status-success";
         } catch (e) {
           msg.textContent = e.message;
-          msg.style.color = "#b91c1c";
+          msg.className = "feedback feedback-error";
         }
       };
       document.getElementById("dlSummaryJson").onclick = async () => {
@@ -1832,7 +1871,7 @@ async function renderAdminReportsPage(root) {
           msg.className = "feedback status-success";
         } catch (e) {
           msg.textContent = e.message;
-          msg.style.color = "#b91c1c";
+          msg.className = "feedback feedback-error";
         }
       };
       shellReady = true;
@@ -1943,8 +1982,8 @@ async function renderAdminAnalyticsPage(root) {
 
   root.innerHTML = `
     <div class="panel-header"><h2 class="section-title">Counselor Analytics</h2></div>
-    <div class="card stack-md" style="margin-bottom:1rem;">
-      <h3 style="margin:0;">Filters</h3>
+    <div class="card stack-md section-block">
+      <h3 class="subsection-title filter-heading-reset">Filters</h3>
       <div class="filter-grid">
         <label class="field">
           <span>Counselors</span>
@@ -1977,7 +2016,7 @@ async function renderAdminAnalyticsPage(root) {
       <div class="kpi"><p>Pending</p><strong id="admBreakPending">0</strong></div>
       <div class="kpi"><p>Declined</p><strong id="admBreakDeclined">0</strong></div>
     </div>
-    <div class="grid-4 outcome-grid" style="margin-top:0.85rem;">
+    <div class="grid-4 outcome-grid u-mt-sm">
       <div class="kpi outcome-card done"><p>Done</p><strong id="admBreakDone">0</strong></div>
       <div class="kpi outcome-card referred"><p>Referred</p><strong id="admBreakReferred">0</strong></div>
       <div class="kpi outcome-card no-show"><p>No-show</p><strong id="admBreakNoShow">0</strong></div>
@@ -2072,7 +2111,7 @@ async function renderAdminAnalyticsPage_legacy(root) {
     if (!root.querySelector("#adminAnalyticsSelect")) {
       root.innerHTML = `
         <div class="panel-header"><h2 class="section-title">Counselor Analytics</h2></div>
-        <div class="card stack-md" style="margin-bottom:1rem;">
+        <div class="card stack-md section-block">
           <label class="field"><span>Counselor</span><select id="adminAnalyticsSelect"></select></label>
           <p class="muted tiny">KPIs and charts count <strong>approved sessions</strong> (status: accepted) by appointment date. Updates every few seconds while you stay on this page.</p>
         </div>
@@ -2148,7 +2187,7 @@ async function renderAdminView(root, menu) {
   if (menu === "Settings") {
     root.innerHTML = `
       <div class="panel-header"><h2 class="section-title">Settings</h2></div>
-      <div class="card stack-md" style="margin-bottom:1rem;">
+      <div class="card stack-md section-block">
         <h3>CSV Upload (Google Sheets Integration)</h3>
         <form id="adminCsvImportForm" class="stack-md">
           <input type="file" id="adminCsvFile" accept=".csv" required />
@@ -2156,7 +2195,7 @@ async function renderAdminView(root, menu) {
         </form>
         <p id="adminCsvMsg" class="feedback"></p>
       </div>
-      <div class="card stack-md" style="margin-bottom:1rem;">
+      <div class="card stack-md section-block">
         <h3>Google Sheets API Sync</h3>
         <form id="adminSheetSyncForm" class="stack-md">
           <label class="field"><span>Spreadsheet ID</span><input id="sheetId" type="text" placeholder="e.g., 1AbC..." required /></label>
@@ -2181,7 +2220,7 @@ async function renderAdminView(root, menu) {
         msg.className = "feedback status-success";
       } catch (err) {
         msg.textContent = err.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
       }
     };
     document.getElementById("adminSheetSyncForm").onsubmit = async (e) => {
@@ -2199,7 +2238,7 @@ async function renderAdminView(root, menu) {
         msg.className = "feedback status-success";
       } catch (err) {
         msg.textContent = err.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
       }
     };
     return;
@@ -2208,7 +2247,7 @@ async function renderAdminView(root, menu) {
     const users = await api("/admin/users");
     root.innerHTML = `
       <div class="panel-header"><h2 class="section-title">User Management</h2></div>
-      <div class="card stack-md" style="margin-bottom:1rem;">
+      <div class="card stack-md section-block">
         <h3>Create Account</h3>
         <form id="createUserForm" class="grid-4">
           <input id="newUserName" type="text" placeholder="Full name" required />
@@ -2218,7 +2257,7 @@ async function renderAdminView(root, menu) {
           <button class="btn primary" type="submit">Create</button>
         </form>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>${users.map((u) => `<tr><td>${u.id}</td><td>${u.full_name}</td><td>${u.email}</td><td>${u.role}</td><td>${u.is_active ? "Active" : "Inactive"}</td><td><button class="btn ghost admin-delete-user" data-id="${u.id}" data-email="${u.email}">Delete</button></td></tr>`).join("")}</tbody></table></div><p id="adminUserMsg" class="feedback"></p>`;
+      <div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>${users.map((u) => `<tr><td>${u.id}</td><td>${u.full_name}</td><td>${u.email}</td><td>${u.role}</td><td>${u.is_active ? "Active" : "Inactive"}</td><td><button type="button" class="btn danger admin-delete-user" data-id="${u.id}" data-email="${u.email}">Delete</button></td></tr>`).join("")}</tbody></table></div><p id="adminUserMsg" class="feedback"></p>`;
     attachPasswordToggle(document.getElementById("newUserPassword"), "new user password");
     const adminPassField = document.getElementById("newUserPassword")?.parentElement;
     if (adminPassField) {
@@ -2234,7 +2273,7 @@ async function renderAdminView(root, menu) {
       const strong = validateStrongPassword(password);
       if (!strong.ok) {
         msg.textContent = strong.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
         return;
       }
       try {
@@ -2252,12 +2291,14 @@ async function renderAdminView(root, menu) {
         await renderAdminView(root, menu);
       } catch (err) {
         msg.textContent = err.message;
-        msg.style.color = "#b91c1c";
+        msg.className = "feedback feedback-error";
       }
     };
     document.querySelectorAll(".admin-delete-user").forEach((btn) => {
       btn.onclick = async () => {
-        const ok = confirm(`Delete user ${btn.dataset.email}? This also removes linked appointments and notifications.`);
+        const ok = confirm(
+          `Permanently delete this user?\n\n${btn.dataset.email}\n\nLinked appointments and notifications will be removed. This cannot be undone.`
+        );
         if (!ok) return;
         const msg = document.getElementById("adminUserMsg");
         try {
@@ -2267,7 +2308,7 @@ async function renderAdminView(root, menu) {
           await renderAdminView(root, menu);
         } catch (err) {
           msg.textContent = err.message;
-          msg.style.color = "#b91c1c";
+          msg.className = "feedback feedback-error";
         }
       };
     });
@@ -2275,9 +2316,10 @@ async function renderAdminView(root, menu) {
   }
   if (menu === "Appointments") {
     const rows = await api("/appointments/my");
-    root.innerHTML = `<div class="panel-header"><h2 class="section-title">Appointments</h2></div><div class="table-wrap"><table><thead><tr><th>Code</th><th>Student</th><th>Counselor</th><th>Date</th><th>Time</th><th>Status</th><th>Student cancellation</th><th>Action</th></tr></thead><tbody>${rows.map((a) => `<tr><td>${escapeHtml(a.booking_code)}</td><td>${escapeHtml(a.student_name || "—")}</td><td>${escapeHtml(a.counselor_name || "—")}</td><td>${a.appointment_date}</td><td>${String(a.appointment_time).slice(0, 5)}</td><td>${a.status}</td><td>${a.student_cancellation_reason ? escapeHtml(a.student_cancellation_reason) : "—"}</td><td><button class="btn ghost admin-resched" data-id="${a.id}">Request Reschedule</button><button class="btn ghost admin-delete-appt" data-id="${a.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><p id="adminApptMsg" class="feedback"></p>`;
+    root.innerHTML = `<div class="panel-header"><h2 class="section-title">Appointments</h2></div><div class="table-wrap"><table><thead><tr><th>Code</th><th>Student</th><th>Counselor</th><th>Date</th><th>Time</th><th>Status</th><th>Student cancellation</th><th>Action</th></tr></thead><tbody>${rows.map((a) => `<tr><td>${escapeHtml(a.booking_code)}</td><td>${escapeHtml(a.student_name || "—")}</td><td>${escapeHtml(a.counselor_name || "—")}</td><td>${a.appointment_date}</td><td>${String(a.appointment_time).slice(0, 5)}</td><td>${a.status}</td><td>${a.student_cancellation_reason ? escapeHtml(a.student_cancellation_reason) : "—"}</td><td><button type="button" class="btn ghost admin-resched" data-id="${a.id}">Request Reschedule</button><button type="button" class="btn danger admin-delete-appt" data-id="${a.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><p id="adminApptMsg" class="feedback"></p>`;
     document.querySelectorAll(".admin-resched").forEach((btn) => {
       btn.onclick = async () => {
+        if (!confirm("Are you sure you want to reschedule this?")) return;
         const msg = document.getElementById("adminApptMsg");
         try {
           await api(`/appointments/${btn.dataset.id}/status`, { method: "PATCH", body: JSON.stringify({ status: "reschedule_requested" }) });
@@ -2286,14 +2328,13 @@ async function renderAdminView(root, menu) {
           await renderAdminView(root, menu);
         } catch (err) {
           msg.textContent = err.message;
-          msg.style.color = "#b91c1c";
+          msg.className = "feedback feedback-error";
         }
       };
     });
     document.querySelectorAll(".admin-delete-appt").forEach((btn) => {
       btn.onclick = async () => {
-        const ok = confirm("Delete this appointment permanently? This will remove it from the database.");
-        if (!ok) return;
+        if (!confirm("Are you sure you want to delete this?")) return;
         const msg = document.getElementById("adminApptMsg");
         try {
           await api(`/admin/appointments/${btn.dataset.id}`, { method: "DELETE" });
@@ -2302,7 +2343,7 @@ async function renderAdminView(root, menu) {
           await renderAdminView(root, menu);
         } catch (err) {
           msg.textContent = err.message;
-          msg.style.color = "#b91c1c";
+          msg.className = "feedback feedback-error";
         }
       };
     });
@@ -2313,7 +2354,7 @@ async function renderAdminView(root, menu) {
     const year = state.calendarYear || new Date().getFullYear();
     root.innerHTML = `
       <div class="panel-header"><h2 class="section-title">Counselor Calendar</h2></div>
-      <div class="card stack-md" style="margin-bottom:1rem;">
+      <div class="card stack-md section-block">
         <label class="field"><span>Select Counselor</span><select id="adminCounselorSelect">${state.counselors.map((c) => `<option value="${c.id}">${c.name}</option>`).join("")}</select></label>
         <div class="auth-actions"><button id="adminLoadCalendar" class="btn primary">Load Calendar</button></div>
       </div>
@@ -2390,8 +2431,25 @@ async function renderAdminView(root, menu) {
   adminOverviewPollTimer = setInterval(refreshAdminOverview, 12000);
 }
 
+function consumeOAuthTokenFromHash() {
+  const raw = window.location.hash || "";
+  if (!raw.includes("gco_token=")) return;
+  try {
+    const params = new URLSearchParams(raw.replace(/^#/, ""));
+    const t = params.get("gco_token");
+    if (t) {
+      localStorage.setItem("gco_token", t);
+      state.token = t;
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+  history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+}
+
 async function initApp() {
   setupLogoDisplay();
+  consumeOAuthTokenFromHash();
   const path = (window.location.pathname || "/").replace(/\/$/, "") || "/";
   const headers = {};
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -2438,7 +2496,9 @@ window.addEventListener("popstate", () => {
   if (m && DASHBOARD_MENUS[state.user.role].includes(m)) {
     state.activeMenu = m;
     setDashboardDocumentTitle(m);
-    renderDashboard(state.user.role);
+    if (!applyDashboardSection(state.user.role, m)) {
+      renderDashboard(state.user.role);
+    }
   }
 });
 
